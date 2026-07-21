@@ -884,7 +884,7 @@ $("#btnSetupSave").addEventListener("click", async ()=>{
     instituteName:name, logoUrl:logo, adminPasswordHash:hash, defaultYear:year, defaultHistoryDays:30
   });
   await loadConfig();
-  sessionStorage.setItem("sw_admin","1");
+  localStorage.setItem("sw_admin","1");
   toast("Setup complete! Welcome, Admin.","ok");
   enterAdminPanel();
 });
@@ -897,7 +897,7 @@ $("#btnAdminLogin").addEventListener("click", async ()=>{
   if(!pass){ errEl.textContent = "Password likhein."; return; }
   const hash = await sha256Hex(pass);
   if(hash === config.adminPasswordHash){
-    sessionStorage.setItem("sw_admin","1");
+    localStorage.setItem("sw_admin","1");
     $("#adminPassInput").value = "";
     enterAdminPanel();
   } else {
@@ -905,7 +905,7 @@ $("#btnAdminLogin").addEventListener("click", async ()=>{
   }
 });
 $("#btnAdminLogout").addEventListener("click", ()=>{
-  sessionStorage.removeItem("sw_admin");
+  localStorage.removeItem("sw_admin");
   showScreen("screen-landing");
 });
 
@@ -1554,7 +1554,7 @@ $("#stuChatInput").addEventListener("keydown", e=>{ if(e.key==="Enter") sendStuM
 (async function init(){
   await waitForAuth();
   await loadConfig();
-  if(sessionStorage.getItem("sw_admin") === "1" && configExists){
+  if(localStorage.getItem("sw_admin") === "1" && configExists){
     await enterAdminPanel();
     return;
   }
