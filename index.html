@@ -241,14 +241,15 @@
   .cal-cell{
     aspect-ratio:1;border-radius:9px;display:flex;align-items:center;justify-content:center;
     font-size:12px;font-weight:600;background:var(--bg);border:1px solid var(--border);color:var(--text-dim);
-    opacity:0;transform:scale(.55);animation:calPop .45s cubic-bezier(.34,1.56,.64,1) forwards;
+    opacity:0;transform:translateY(5px) scale(.86);animation:calPop .38s cubic-bezier(.22,1,.36,1) forwards;
     transition:transform .15s ease, box-shadow .15s ease;
   }
   .cal-cell:hover{transform:scale(1.12);box-shadow:0 6px 14px rgba(15,26,43,.15);z-index:1;}
   .cal-cell.present{background:linear-gradient(160deg,#12C08A,#0E9F6E);border-color:var(--good);color:#fff;font-weight:800;box-shadow:0 3px 8px rgba(14,159,110,.35);}
   .cal-cell.absent{background:linear-gradient(160deg,#EB5B50,#D6392E);border-color:var(--danger);color:#fff;font-weight:800;box-shadow:0 3px 8px rgba(214,57,46,.3);}
+  .cal-cell.closed{background:linear-gradient(160deg,#FFD27A,#FFB020);border-color:var(--accent-4);color:#7A4A00;font-weight:800;box-shadow:0 3px 8px rgba(255,176,32,.3);}
   .cal-cell.blank{visibility:hidden;animation:none;}
-  @keyframes calPop{ 0%{opacity:0;transform:scale(.55);} 70%{opacity:1;transform:scale(1.08);} 100%{opacity:1;transform:scale(1);} }
+  @keyframes calPop{ 0%{opacity:0;transform:translateY(5px) scale(.86);} 60%{opacity:1;transform:translateY(0) scale(1.04);} 100%{opacity:1;transform:translateY(0) scale(1);} }
   @media (prefers-reduced-motion: reduce){ .cal-cell{animation:none;opacity:1;transform:none;} }
   .cal-legend{display:flex;gap:14px;margin-top:12px;font-size:12px;color:var(--text-dim);}
   .cal-legend span{display:inline-flex;align-items:center;gap:5px;}
@@ -606,7 +607,7 @@
       <div class="cal-legend">
         <span><i class="dot" style="background:var(--good);"></i>Present</span>
         <span><i class="dot" style="background:var(--danger);"></i>Absent</span>
-        <span><i class="dot" style="background:var(--border);"></i>No record</span>
+        <span><i class="dot" style="background:var(--accent-4);"></i>Closed</span>
       </div>
     </div>
   </div>
@@ -737,6 +738,27 @@ async function waitForAuth(){ return authReady; }
 const $ = (s, r=document) => r.querySelector(s);
 const $all = (s, r=document) => Array.from(r.querySelectorAll(s));
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const DAYS_SHORT = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+/* App launched in August 2026 — no data/months exist before this, so hide earlier months/years everywhere */
+const APP_START_YEAR = 2026;
+const APP_START_MONTH = 7; // 0-indexed => August
+function yearOptionsHtml(base){
+  const start = APP_START_YEAR;
+  const end = Math.max(base+1, APP_START_YEAR+1);
+  const opts = [];
+  for(let y=start; y<=end; y++) opts.push(`<option value="${y}">${y}</option>`);
+  return opts.join("");
+}
+function monthOptionsHtml(year){
+  const startM = (parseInt(year,10) === APP_START_YEAR) ? APP_START_MONTH : 0;
+  const opts = [];
+  for(let i=startM; i<12; i++) opts.push(`<option value="${i}">${MONTHS[i]}</option>`);
+  return opts.join("");
+}
+function clampMonthValue(year, monthIdx){
+  const startM = (parseInt(year,10) === APP_START_YEAR) ? APP_START_MONTH : 0;
+  return Math.max(monthIdx, startM);
+}
 
 function toast(msg, type=""){
   const wrap = $("#toastWrap");
@@ -1143,19 +1165,23 @@ function populateHistorySelectors(){
   }).join("");
 
   const mSel = $("#histMonthSel");
-  if(!mSel.dataset.filled){
-    mSel.innerHTML = MONTHS.map((m,i)=>`<option value="${i}">${m}</option>`).join("");
-    mSel.value = new Date().getMonth();
-    mSel.dataset.filled = "1";
-  }
   const ySel = $("#histYearSel");
   if(!ySel.dataset.filled){
     const base = (config && config.defaultYear) || new Date().getFullYear();
-    const opts = [];
-    for(let y = base-2; y<=base+1; y++) opts.push(`<option value="${y}">${y}</option>`);
-    ySel.innerHTML = opts.join("");
-    ySel.value = base;
+    ySel.innerHTML = yearOptionsHtml(base);
+    ySel.value = Math.max(new Date().getFullYear(), APP_START_YEAR);
     ySel.dataset.filled = "1";
+    ySel.addEventListener("change", ()=>{
+      const y = parseInt(ySel.value,10);
+      mSel.innerHTML = monthOptionsHtml(y);
+      mSel.value = clampMonthValue(y, parseInt(mSel.value,10)||0);
+    });
+  }
+  if(!mSel.dataset.filled){
+    const selYear = parseInt(ySel.value,10);
+    mSel.innerHTML = monthOptionsHtml(selYear);
+    mSel.value = clampMonthValue(selYear, new Date().getMonth());
+    mSel.dataset.filled = "1";
   }
 }
 
@@ -1178,9 +1204,14 @@ function buildMonthCalendarHtml(year, monthIdx, statusMap){
     const ds = year+"-"+pad(monthIdx+1)+"-"+pad(d);
     const st = statusMap[ds];
     let cls = "";
-    if(ds <= today){ cls = st === "present" ? "present" : "absent"; }
-    const delay = (i * 14) + "ms";
-    html += `<div class="cal-cell ${cls}" style="animation-delay:${delay}">${d}</div>`;
+    let inner = `${d}`;
+    if(ds <= today){
+      if(st === "present"){ cls = "present"; }
+      else if(st === "absent"){ cls = "absent"; }
+      else { cls = "closed block-cell"; inner = `<span class="bd">${d}</span><span class="bm">Closed</span>`; }
+    }
+    const delay = Math.min(i * 9, 260) + "ms";
+    html += `<div class="cal-cell ${cls}" style="animation-delay:${delay}">${inner}</div>`;
     i++;
   }
   html += `</div>`;
@@ -1192,13 +1223,18 @@ function buildDateBlocksHtml(dateList, statusMap){
   let html = `<div class="cal-grid">`;
   dateList.forEach((ds,i)=>{
     const st = statusMap[ds];
-    let cls = "";
-    if(ds <= today){ cls = st === "present" ? "present" : "absent"; }
     const parts = ds.split("-");
     const day = parseInt(parts[2],10);
     const mon = MONTHS[parseInt(parts[1],10)-1].slice(0,3);
-    const delay = (i * 10) + "ms";
-    html += `<div class="cal-cell block-cell ${cls}" style="animation-delay:${delay}" title="${ds}"><span class="bd">${day}</span><span class="bm">${mon}</span></div>`;
+    let cls = "";
+    let bmText = mon;
+    if(ds <= today){
+      if(st === "present"){ cls = "present"; }
+      else if(st === "absent"){ cls = "absent"; }
+      else { cls = "closed"; bmText = "Closed"; }
+    }
+    const delay = Math.min(i * 7, 260) + "ms";
+    html += `<div class="cal-cell block-cell ${cls}" style="animation-delay:${delay}" title="${ds}"><span class="bd">${day}</span><span class="bm">${bmText}</span></div>`;
   });
   html += `</div>`;
   return html;
@@ -1237,33 +1273,189 @@ $("#btnViewHistory").addEventListener("click", async ()=>{
   lastHistoryExport = { student, year, monthIdx, dateList, fullMap };
 });
 
+function buildAttendanceDonutImage(present, absent, closed){
+  const size = 320;
+  const canvas = document.createElement("canvas");
+  canvas.width = size; canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  const cx = size/2, cy = size/2, rOuter = 138, rInner = 84;
+  const total = present + absent + closed;
+  const segs = [
+    { val: present, color: "#0E9F6E" },
+    { val: absent,  color: "#D6392E" },
+    { val: closed,  color: "#FFB020" }
+  ];
+  if(total <= 0){
+    ctx.beginPath();
+    ctx.arc(cx, cy, rOuter, 0, Math.PI*2);
+    ctx.fillStyle = "#E4E9F5";
+    ctx.fill();
+  } else {
+    let start = -Math.PI/2;
+    segs.forEach(seg=>{
+      if(seg.val <= 0) return;
+      const angle = (seg.val/total) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, rOuter, start, start + angle);
+      ctx.closePath();
+      ctx.fillStyle = seg.color;
+      ctx.fill();
+      start += angle;
+    });
+  }
+  ctx.beginPath();
+  ctx.arc(cx, cy, rInner, 0, Math.PI*2);
+  ctx.fillStyle = "#FFFFFF";
+  ctx.fill();
+  const pctVal = total ? Math.round((present/total)*100) : 0;
+  ctx.fillStyle = "#0F1A2B";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = "bold 54px Arial, sans-serif";
+  ctx.fillText(pctVal+"%", cx, cy-8);
+  ctx.font = "600 18px Arial, sans-serif";
+  ctx.fillStyle = "#5B6B87";
+  ctx.fillText("ATTENDANCE", cx, cy+34);
+  return canvas.toDataURL("image/png");
+}
+
 $("#btnExportHistory").addEventListener("click", ()=>{
   if(!lastHistoryExport){ toast("Pehle 'History Dekhein' par click karein","err"); return; }
   const { student, year, monthIdx, dateList, fullMap } = lastHistoryExport;
   const { present, total, pct } = statsFromMap(fullMap, dateList);
-  const rows = dateList.map(ds=>[ ds, fullMap[ds] ? (fullMap[ds]==="present"?"Present":"Absent") : "No Record" ]);
+  const today = todayStr();
+  const absent = dateList.filter(ds=> ds<=today && fullMap[ds]==="absent").length;
+  const closed = dateList.filter(ds=> ds<=today && !fullMap[ds]).length;
+  const rows = dateList.map(ds=>{
+    const st = fullMap[ds];
+    const status = ds>today ? "Upcoming" : (st==="present" ? "Present" : st==="absent" ? "Absent" : "Closed");
+    const dObj = new Date(ds+"T00:00:00");
+    const dayName = dObj.toString()!=="Invalid Date" ? DAYS_SHORT[dObj.getDay()] : "";
+    return [ ds, dayName, status ];
+  });
 
   const { jsPDF } = window.jspdf;
-  const pdfDoc = new jsPDF();
+  const pdfDoc = new jsPDF({ unit:"mm", format:"a4" });
+  const pageW = pdfDoc.internal.pageSize.getWidth();
   const instName = (config && config.instituteName) || "Science World";
+  const genDate = new Date().toLocaleString();
+  const COL_TEAL = [15,158,146], COL_PURPLE=[91,79,224], COL_TEXT=[15,26,43], COL_DIM=[91,107,135];
+  const COL_GOOD=[14,159,110], COL_DANGER=[214,57,46], COL_WARN=[255,176,32];
 
+  // ---- Header banner ----
+  pdfDoc.setFillColor(...COL_TEAL);
+  pdfDoc.rect(0, 0, pageW, 30, "F");
+  pdfDoc.setFillColor(...COL_PURPLE);
+  pdfDoc.rect(0, 0, pageW*0.42, 30, "F");
+  pdfDoc.setFillColor(255,255,255);
   pdfDoc.setFont("helvetica","bold");
-  pdfDoc.setFontSize(16);
-  pdfDoc.text(instName + " — Attendance Report", 14, 18);
+  pdfDoc.setFontSize(18);
+  pdfDoc.text(instName, 14, 14);
   pdfDoc.setFont("helvetica","normal");
-  pdfDoc.setFontSize(11);
-  pdfDoc.text(`Student: ${student ? student.name : "-"}`, 14, 27);
-  pdfDoc.text(`Class/Batch: ${student ? student.class+" · "+student.batch : "-"}`, 14, 33);
-  pdfDoc.text(`Month: ${MONTHS[monthIdx]} ${year}`, 14, 39);
-  pdfDoc.text(`Present: ${present}   Total Marked: ${total}   Attendance %: ${pct}%`, 14, 45);
+  pdfDoc.setFontSize(10.5);
+  pdfDoc.text("Student Attendance Report", 14, 22);
+  pdfDoc.setFontSize(9);
+  pdfDoc.text(`Generated: ${genDate}`, pageW-14, 14, { align:"right" });
+  pdfDoc.text(`${MONTHS[monthIdx]} ${year}`, pageW-14, 22, { align:"right" });
 
+  // ---- Student info box ----
+  let y = 40;
+  pdfDoc.setDrawColor(220,227,242);
+  pdfDoc.setFillColor(247,249,253);
+  pdfDoc.roundedRect(14, y, pageW-28, 20, 3, 3, "FD");
+  pdfDoc.setTextColor(...COL_TEXT);
+  pdfDoc.setFont("helvetica","bold");
+  pdfDoc.setFontSize(13);
+  pdfDoc.text(student ? student.name : "-", 20, y+9);
+  pdfDoc.setFont("helvetica","normal");
+  pdfDoc.setFontSize(10);
+  pdfDoc.setTextColor(...COL_DIM);
+  pdfDoc.text(`${student ? student.class+"  ·  "+student.batch : "-"}`, 20, y+16);
+
+  // ---- Stat cards ----
+  y += 28;
+  const cardW = (pageW-28-3*4)/4, cardH = 22;
+  const cards = [
+    { label:"PRESENT", val: present, color: COL_GOOD },
+    { label:"ABSENT", val: absent, color: COL_DANGER },
+    { label:"CLOSED", val: closed, color: COL_WARN },
+    { label:"ATTENDANCE %", val: pct+"%", color: COL_PURPLE }
+  ];
+  cards.forEach((c,i)=>{
+    const x = 14 + i*(cardW+4);
+    pdfDoc.setDrawColor(...c.color);
+    pdfDoc.setFillColor(255,255,255);
+    pdfDoc.roundedRect(x, y, cardW, cardH, 3, 3, "FD");
+    pdfDoc.setFont("helvetica","bold");
+    pdfDoc.setFontSize(15);
+    pdfDoc.setTextColor(...c.color);
+    pdfDoc.text(String(c.val), x+cardW/2, y+11, { align:"center" });
+    pdfDoc.setFont("helvetica","normal");
+    pdfDoc.setFontSize(7.2);
+    pdfDoc.setTextColor(...COL_DIM);
+    pdfDoc.text(c.label, x+cardW/2, y+18, { align:"center" });
+  });
+
+  // ---- Donut chart + legend ----
+  y += cardH + 10;
+  const chartImg = buildAttendanceDonutImage(present, absent, closed);
+  const chartSize = 46;
+  pdfDoc.setDrawColor(220,227,242);
+  pdfDoc.setFillColor(255,255,255);
+  pdfDoc.roundedRect(14, y, pageW-28, chartSize+10, 3, 3, "FD");
+  pdfDoc.addImage(chartImg, "PNG", 20, y+5, chartSize, chartSize);
+  const legX = 20+chartSize+14;
+  let legY = y+14;
+  pdfDoc.setFont("helvetica","bold");
+  pdfDoc.setFontSize(11);
+  pdfDoc.setTextColor(...COL_TEXT);
+  pdfDoc.text("Attendance Breakdown", legX, legY);
+  legY += 8;
+  const legendItems = [
+    { c: COL_GOOD, t: `Present  —  ${present} day(s)` },
+    { c: COL_DANGER, t: `Absent  —  ${absent} day(s)` },
+    { c: COL_WARN, t: `Closed / No record  —  ${closed} day(s)` }
+  ];
+  pdfDoc.setFont("helvetica","normal");
+  pdfDoc.setFontSize(9.5);
+  legendItems.forEach(li=>{
+    pdfDoc.setFillColor(...li.c);
+    pdfDoc.roundedRect(legX, legY-3.2, 4, 4, 1, 1, "F");
+    pdfDoc.setTextColor(...COL_TEXT);
+    pdfDoc.text(li.t, legX+7, legY);
+    legY += 6.5;
+  });
+
+  // ---- Table ----
+  y += chartSize+10+8;
   pdfDoc.autoTable({
-    head: [["Date","Status"]],
+    head: [["Date","Day","Status"]],
     body: rows,
-    startY: 52,
+    startY: y,
     theme: "grid",
-    headStyles: { fillColor: [15,158,146] },
-    styles: { fontSize: 10 }
+    headStyles: { fillColor: COL_TEAL, textColor: 255, fontStyle:"bold", halign:"left" },
+    styles: { fontSize: 9, cellPadding: 2.4 },
+    alternateRowStyles: { fillColor: [247,249,253] },
+    columnStyles: { 2: { fontStyle:"bold" } },
+    didParseCell: (data)=>{
+      if(data.section==="body" && data.column.index===2){
+        const v = data.cell.raw;
+        if(v==="Present") data.cell.styles.textColor = COL_GOOD;
+        else if(v==="Absent") data.cell.styles.textColor = COL_DANGER;
+        else if(v==="Closed") data.cell.styles.textColor = [180,120,0];
+        else data.cell.styles.textColor = COL_DIM;
+      }
+    },
+    didDrawPage: ()=>{
+      const ph = pdfDoc.internal.pageSize.getHeight();
+      const pc = pdfDoc.internal.getNumberOfPages();
+      pdfDoc.setFont("helvetica","normal");
+      pdfDoc.setFontSize(8);
+      pdfDoc.setTextColor(...COL_DIM);
+      pdfDoc.text(instName+" · Attendance Report", 14, ph-8);
+      pdfDoc.text(`Page ${pc}`, pageW-14, ph-8, { align:"right" });
+    }
   });
 
   const fname = `${(student?student.name:"student").replace(/\s+/g,"_")}_${MONTHS[monthIdx]}_${year}.pdf`;
@@ -1446,9 +1638,9 @@ function openStudentDashboard(){
   $("#stuDashSub").textContent = config.instituteName || "Science World";
   populateStuMonthSelectors();
   switchStuTab("attendance");
-  stuRangeMode = "30";
-  $all("#stuPanelAttendance .tab-btn").forEach(b=> b.classList.toggle("active", b.dataset.range==="30"));
-  $("#stuMonthPicker").style.display = "none";
+  stuRangeMode = "month";
+  $all("#stuPanelAttendance .tab-btn").forEach(b=> b.classList.toggle("active", b.dataset.range==="month"));
+  $("#stuMonthPicker").style.display = "flex";
   loadStuAttendance();
 }
 function switchStuTab(tab){
@@ -1471,16 +1663,20 @@ $all("#stuPanelAttendance .tab-btn").forEach(btn=>{
 });
 function populateStuMonthSelectors(){
   const mSel = $("#stuMonthSel");
-  mSel.innerHTML = MONTHS.map((m,i)=>`<option value="${i}">${m}</option>`).join("");
-  mSel.value = new Date().getMonth();
   const ySel = $("#stuYearSel");
   const base = (config && config.defaultYear) || new Date().getFullYear();
-  const opts = [];
-  for(let y=base-2; y<=base+1; y++) opts.push(`<option value="${y}">${y}</option>`);
-  ySel.innerHTML = opts.join("");
-  ySel.value = base;
+  ySel.innerHTML = yearOptionsHtml(base);
+  ySel.value = Math.max(new Date().getFullYear(), APP_START_YEAR);
+  const selYear = parseInt(ySel.value,10);
+  mSel.innerHTML = monthOptionsHtml(selYear);
+  mSel.value = clampMonthValue(selYear, new Date().getMonth());
+  ySel.onchange = ()=>{
+    const y = parseInt(ySel.value,10);
+    mSel.innerHTML = monthOptionsHtml(y);
+    mSel.value = clampMonthValue(y, parseInt(mSel.value,10)||0);
+    loadStuAttendance();
+  };
   mSel.onchange = loadStuAttendance;
-  ySel.onchange = loadStuAttendance;
 }
 async function loadStuAttendance(){
   const fullMap = await getStudentAttendanceAll(currentStudent.id);
@@ -1488,7 +1684,7 @@ async function loadStuAttendance(){
   const listWrap = $("#stuListWrap");
   calWrap.innerHTML = ""; listWrap.innerHTML = "";
   let dateList = [];
-  const legendHtml = `<div class="cal-legend"><span><i class="dot" style="background:var(--good);"></i>Present</span><span><i class="dot" style="background:var(--danger);"></i>Absent</span><span><i class="dot" style="background:var(--border);"></i>No record</span></div>`;
+  const legendHtml = `<div class="cal-legend"><span><i class="dot" style="background:var(--good);"></i>Present</span><span><i class="dot" style="background:var(--danger);"></i>Absent</span><span><i class="dot" style="background:var(--accent-4);"></i>Closed</span></div>`;
   if(stuRangeMode === "month"){
     const year = parseInt($("#stuYearSel").value);
     const monthIdx = parseInt($("#stuMonthSel").value);
