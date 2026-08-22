@@ -425,11 +425,6 @@
       </div>
     </div>
 
-    <div class="card" id="gpsCheckinCard" style="margin-bottom:16px;text-align:center;">
-      <button class="btn" id="btnGpsCheckin" style="max-width:340px;margin:0 auto;">📍 Attendance Register Karein</button>
-      <div id="gpsCheckinStatus" style="margin-top:10px;font-size:13px;font-weight:600;"></div>
-    </div>
-
     <div class="segmented">
       <button class="active" id="stuTabAttendance">Attendance</button>
       <button id="stuTabSupport">Support Chat</button>
@@ -1805,112 +1800,8 @@ function openStudentDashboard(){
   $all("#stuPanelAttendance .tab-btn").forEach(b=> b.classList.toggle("active", b.dataset.range==="month"));
   $("#stuMonthPicker").style.display = "flex";
   loadStuAttendance();
-  refreshGpsCheckinUI();
 }
 
-/* ---------------- STUDENT: GPS SELF CHECK-IN ---------------- */
-async function refreshGpsCheckinUI(){
-  const btn = $("#btnGpsCheckin");
-  const statusEl = $("#gpsCheckinStatus");
-  btn.disabled = false;
-  btn.textContent = "📍 Attendance Register Karein";
-  statusEl.className = "";
-
-  const dateStr = todayStr();
-  try{
-    const existing = await getDoc(doc(db,"attendance",dateStr+"_"+currentStudent.id));
-    if(existing.exists() && existing.data().status === "present"){
-      btn.disabled = true;
-      btn.textContent = "✅ Aaj Present Marked";
-      statusEl.textContent = "Aapki aaj ki attendance ban chuki hai.";
-      return;
-    }
-  } catch(e){ console.error(e); }
-
-  const startMin = timeStrToMinutes(config.checkinStart || "07:00");
-  const endMin = timeStrToMinutes(config.checkinEnd || "10:00");
-  const nowMin = new Date().getHours()*60 + new Date().getMinutes();
-  if(nowMin < startMin || nowMin >= endMin){
-    btn.disabled = true;
-    statusEl.textContent = `⏰ Check-in sirf ${config.checkinStart||"07:00"} se ${config.checkinEnd||"10:00"} ke beech hota hai.`;
-    return;
-  }
-  statusEl.textContent = "Coaching pahunchne par button dabayein.";
-}
-
-$("#btnGpsCheckin").addEventListener("click", async ()=>{
-  const btn = $("#btnGpsCheckin");
-  const statusEl = $("#gpsCheckinStatus");
-  statusEl.className = "";
-  const dateStr = todayStr();
-
-  const startMin = timeStrToMinutes(config.checkinStart || "07:00");
-  const endMin = timeStrToMinutes(config.checkinEnd || "10:00");
-  const nowMin = new Date().getHours()*60 + new Date().getMinutes();
-  if(nowMin < startMin || nowMin >= endMin){
-    statusEl.textContent = `⏰ Check-in sirf ${config.checkinStart||"07:00"} se ${config.checkinEnd||"10:00"} ke beech hota hai.`;
-    statusEl.className = "err";
-    return;
-  }
-
-  try{
-    const closedSnap = await getDoc(doc(db,"closures",dateStr));
-    if(closedSnap.exists() && closedSnap.data().closed === true){
-      statusEl.textContent = "🔒 Aaj coaching band hai. Attendance nahi ban sakti.";
-      statusEl.className = "err";
-      return;
-    }
-  } catch(e){ console.error(e); }
-
-  if(config.geoLat == null || config.geoLng == null){
-    statusEl.textContent = "Admin ne abhi coaching ki location set nahi ki hai.";
-    statusEl.className = "err";
-    return;
-  }
-  if(!navigator.geolocation){
-    statusEl.textContent = "❌ Is device me location support nahi hai.";
-    statusEl.className = "err";
-    return;
-  }
-
-  btn.disabled = true;
-  btn.textContent = "📍 Location check ho rahi hai...";
-  statusEl.textContent = "";
-
-  navigator.geolocation.getCurrentPosition(async pos=>{
-    const dist = distanceMeters(config.geoLat, config.geoLng, pos.coords.latitude, pos.coords.longitude);
-    const radius = config.geoRadius || 120;
-    if(dist > radius){
-      statusEl.textContent = `❌ Aap coaching se ~${Math.round(dist)}m door hain (limit ${radius}m). Coaching aakar try karein.`;
-      statusEl.className = "err";
-      btn.disabled = false;
-      btn.textContent = "📍 Attendance Register Karein";
-      return;
-    }
-    try{
-      const docId = dateStr+"_"+currentStudent.id;
-      await setDoc(doc(db,"attendance",docId), {
-        studentId: currentStudent.id, date: dateStr, status:"present",
-        markedAt: serverTimestamp(), method:"gps", distance: Math.round(dist)
-      });
-      delete attDateCache[dateStr];
-      statusEl.textContent = "✅ Attendance register ho gayi!";
-      statusEl.className = "ok";
-      btn.textContent = "✅ Aaj Present Marked";
-    } catch(e){
-      console.error(e);
-      statusEl.textContent = "Kuch error aaya, dobara try karein.";
-      statusEl.className = "err";
-      btn.disabled = false;
-      btn.textContent = "📍 Attendance Register Karein";
-    }
-  }, err=>{
-    statusEl.textContent = "Location permission zaroori hai — allow karke dobara try karein.";
-    statusEl.className = "err";
-    btn.disabled = false;
-    btn.textContent = "📍 Attendance Register Karein";
-  }, { enableHighAccuracy:true, timeout:15000, maximumAge:0 });
-});
 function switchStuTab(tab){
   $("#stuTabAttendance").classList.toggle("active", tab==="attendance");
   $("#stuTabSupport").classList.toggle("active", tab==="support");
