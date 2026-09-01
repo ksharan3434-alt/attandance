@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Science World — Student Portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --glass-bg: rgba(12,16,32,0.55);
+    --glass-bg-soft: rgba(12,16,32,0.4);
+    --glass-border: rgba(255,255,255,0.16);
+    --ink:#1A1F2B;
+    --ink-soft:rgba(255,255,255,0.78);
+    --text-on-glass:#fff;
+    --accent:#8B93FF;
+    --present:#5FE3A6;
+    --absent:#FF8A8A;
+    --sans:"Poppins",-apple-system,"Segoe UI",sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0; font-family:var(--sans); color:#fff; min-height:100vh; overflow-x:hidden;
+    background:#0B0E22;
+  }
+  .bg-slideshow{position:fixed; inset:0; z-index:0;}
+  .bg-layer{
+    position:absolute; inset:0; background-size:cover; background-position:center;
+    opacity:0; transition:opacity 1.8s ease;
+  }
+  .bg-layer.active{opacity:1;}
+  .bg-overlay{
+    position:fixed; inset:0; z-index:0;
+    background:linear-gradient(160deg, rgba(8,10,24,0.72), rgba(20,14,40,0.68));
+    pointer-events:none;
+  }
+  .hidden{display:none !important;}
+  .bg-blobs{display:none;}
+
+  #app{position:relative; z-index:1; max-width:920px; margin:0 auto; padding:20px 18px 70px;}
+  h2, .name, .brand, #summaryStudentName, .pct-big, .num{text-shadow:0 1px 6px rgba(0,0,0,0.4);}
+
+  .glass-nav{
+    display:flex; align-items:center; justify-content:center; padding:14px 20px; margin-bottom:22px;
+    background:var(--glass-bg); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);
+    border:1px solid var(--glass-border); border-radius:18px; box-shadow:0 8px 32px rgba(0,0,0,0.35);
+  }
+  .brand{display:flex; align-items:center; gap:9px; font-weight:700; font-size:18px; letter-spacing:.02em; user-select:none; cursor:default;}
+  .brand img{height:30px; width:auto; display:block;}
+
+  .glass-card{
+    background:var(--glass-bg); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);
+    border:1px solid var(--glass-border); border-radius:20px; box-shadow:0 8px 32px rgba(0,0,0,0.35);
+    padding:22px; margin-bottom:20px;
+  }
+  .glass-card h2{margin:0 0 14px; font-size:18px; font-weight:600;}
+  .glass-card h2.tight{margin-bottom:4px;}
+  .section-sub{font-size:12.5px; color:var(--ink-soft); margin-bottom:14px;}
+
+  /* Carousel */
+  .carousel-section{margin-bottom:26px;}
+  .carousel-viewport{position:relative; border-radius:22px; overflow:hidden; border:1px solid var(--glass-border); box-shadow:0 8px 32px rgba(0,0,0,0.4);}
+  .carousel-track{display:flex; transition:transform .5s ease;}
+  .carousel-slide{
+    min-width:100%; aspect-ratio:21/6; max-height:190px; position:relative; cursor:pointer; background:rgba(255,255,255,0.06);
+    display:flex; align-items:center; justify-content:center;
+  }
+  .carousel-slide img{width:100%; height:100%; object-fit:cover; display:block;}
+  .carousel-slide .glass-caption{
+    position:absolute; bottom:10px; left:10px; right:10px; padding:8px 14px; border-radius:12px;
+    background:rgba(0,0,0,0.45); backdrop-filter:blur(10px); font-size:12px; color:#fff; opacity:0; transition:opacity .2s;
+  }
+  .carousel-slide:hover .glass-caption, .carousel-slide:focus .glass-caption{opacity:1;}
+  .carousel-dots{display:flex; justify-content:center; gap:7px; margin-top:12px;}
+  .dot{width:7px; height:7px; border-radius:50%; background:rgba(255,255,255,0.35); cursor:pointer; border:none;}
+  .dot.active{background:#fff;}
+  .carousel-empty{aspect-ratio:21/6; max-height:190px; display:flex; align-items:center; justify-content:center; color:var(--ink-soft); font-size:13px; background:var(--glass-bg-soft); border-radius:22px; border:1px dashed var(--glass-border);}
+
+  /* Students */
+  .search-glass input{
+    width:100%; padding:12px 16px; border-radius:14px; border:1px solid var(--glass-border);
+    background:var(--glass-bg-soft); color:#fff; font-family:var(--sans); font-size:14px; margin-bottom:14px;
+  }
+  .search-glass input::placeholder{color:var(--ink-soft);}
+  .student-glass-list{display:flex; flex-direction:column; gap:10px;}
+  .student-row{
+    display:flex; justify-content:space-between; align-items:center; padding:14px 18px; border-radius:16px;
+    background:var(--glass-bg-soft); border:1px solid var(--glass-border);
+  }
+  .student-row .name{font-weight:500; font-size:14.5px;}
+  .student-row .roll{font-size:11.5px; color:var(--ink-soft);}
+  .glass-btn{
+    background:linear-gradient(135deg,#8B7CF6,#B84B7A); color:#fff; border:none; padding:9px 16px;
+    border-radius:12px; font-family:var(--sans); font-weight:600; font-size:13px; cursor:pointer;
+  }
+  .glass-btn:hover{opacity:.9;}
+  .glass-btn.ghost{background:var(--glass-bg-soft); border:1px solid var(--glass-border);}
+  .empty-note{color:var(--ink-soft); font-size:13px; text-align:center; padding:14px;}
+
+  /* Summary screen */
+  .back-btn{margin-bottom:16px;}
+  .summary-card{text-align:center;}
+  .month-nav{display:flex; align-items:center; justify-content:center; gap:16px; margin:6px 0 18px;}
+  .month-nav button{
+    background:var(--glass-bg-soft); border:1px solid var(--glass-border); color:#fff; width:34px; height:34px;
+    border-radius:50%; font-size:16px; cursor:pointer;
+  }
+  #monthYearLabel{font-size:15px; font-weight:600; min-width:150px;}
+  .pct-big{font-size:56px; font-weight:700; margin:6px 0;}
+  .pct-note{color:var(--ink-soft); font-size:12.5px; margin-bottom:16px;}
+  .summary-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:12px;}
+  .glass-stat{background:var(--glass-bg-soft); border:1px solid var(--glass-border); border-radius:14px; padding:14px 6px;}
+  .glass-stat .num{font-size:24px; font-weight:700;}
+  .glass-stat .lbl{font-size:11px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.03em; margin-top:2px;}
+
+  /* Admin */
+  .field-glass{margin-bottom:12px;}
+  .field-glass label{font-size:12px; color:var(--ink-soft); display:block; margin-bottom:5px;}
+  .field-glass input[type="text"], .field-glass input[type="password"]{
+    width:100%; padding:11px 14px; border-radius:12px; border:1px solid var(--glass-border);
+    background:var(--glass-bg-soft); color:#fff; font-family:var(--sans); font-size:14px;
+  }
+  .dropzone{
+    border:2px dashed var(--glass-border); border-radius:16px; padding:34px 16px; text-align:center;
+    color:var(--ink-soft); font-size:13.5px; cursor:pointer; margin-bottom:14px; transition:background .15s, border-color .15s;
+  }
+  .dropzone.dragover{background:rgba(255,255,255,0.15); border-color:#fff;}
+  .preview-thumb{width:100%; max-height:160px; object-fit:cover; border-radius:12px; margin-bottom:12px;}
+  .banner-admin-row{display:flex; align-items:center; gap:12px; padding:10px; border-radius:14px; background:var(--glass-bg-soft); border:1px solid var(--glass-border); margin-bottom:10px;}
+  .banner-admin-row img{width:70px; height:44px; object-fit:cover; border-radius:8px; flex-shrink:0;}
+  .banner-admin-row .link-text{flex:1; font-size:12px; color:var(--ink-soft); word-break:break-all;}
+  .banner-admin-row .move-btns{display:flex; flex-direction:column; gap:2px;}
+  .banner-admin-row .move-btns button{background:none; border:none; color:#fff; cursor:pointer; font-size:11px; padding:0;}
+  #adminPassError{color:var(--absent); font-size:12.5px; margin-top:8px; min-height:16px;}
+</style>
+</head>
+<body>
+
+<div class="bg-slideshow" id="bgSlideshow">
+  <div class="bg-layer" id="bgLayerA"></div>
+  <div class="bg-layer" id="bgLayerB"></div>
+</div>
+<div class="bg-overlay"></div>
+
+<div id="app">
+  <div class="glass-nav">
+    <div class="brand" id="brandTap"><img src="logo.png" alt="" onerror="this.style.display='none'"> Science World</div>
+  </div>
+
+  <!-- HOME -->
+  <main id="homeScreen">
+    <section class="carousel-section">
+      <div class="carousel-viewport" id="carouselViewport">
+        <div class="carousel-empty" id="carouselEmpty">No banners yet</div>
+        <div class="carousel-track hidden" id="carouselTrack"></div>
+      </div>
+      <div class="carousel-dots" id="carouselDots"></div>
+    </section>
+
+    <div class="glass-card">
+      <h2 class="tight">Students</h2>
+      <div class="section-sub">Attendance Summary — August 2026</div>
+      <div class="search-glass"><input id="studentSearchHome" placeholder="Search a name..."></div>
+      <div class="student-glass-list" id="studentGlassList"></div>
+    </div>
+  </main>
+
+  <!-- ADMIN PASSWORD -->
+  <main id="adminPassScreen" class="hidden">
+    <div class="glass-card" style="max-width:340px; margin:60px auto 0;">
+      <h2>Admin access</h2>
+      <div class="field-glass">
+        <label>Password</label>
+        <input type="password" id="adminPassInput">
+      </div>
+      <button class="glass-btn" id="adminPassSubmit">Enter</button>
+      <div id="adminPassError"></div>
+    </div>
+  </main>
+
+  <!-- ADMIN PANEL -->
+  <main id="adminScreen" class="hidden">
+    <button class="glass-btn ghost back-btn" id="exitAdminBtn">← Exit admin</button>
+
+    <div class="glass-card">
+      <h2>Add a student</h2>
+      <div class="field-glass">
+        <label>Student name</label>
+        <input type="text" id="newLinkName" placeholder="e.g. Rohit Kumar">
+      </div>
+      <div class="field-glass">
+        <label>Link to their data</label>
+        <input type="text" id="newLinkUrl" placeholder="https://...">
+      </div>
+      <button class="glass-btn" id="addLinkBtn">Add student</button>
+      <div id="addLinkStatus" style="font-size:12px; color:var(--present); margin-top:8px;"></div>
+    </div>
+
+    <div class="glass-card">
+      <h2>Current students</h2>
+      <button class="glass-btn ghost" id="clearAllLinksBtn" style="margin-bottom:12px;">Remove all students</button>
+      <div id="linkAdminList"></div>
+    </div>
+
+    <div class="glass-card">
+      <h2>Add a banner</h2>
+      <div class="dropzone" id="dropzone">Drag & drop an image here — or click to choose one</div>
+      <input type="file" id="fileInput" accept="image/*" hidden>
+      <img id="previewThumb" class="preview-thumb hidden">
+      <div class="field-glass">
+        <label>Link this banner opens</label>
+        <input type="text" id="bannerLink" placeholder="https://...">
+      </div>
+      <button class="glass-btn" id="addBannerBtn">Add banner</button>
+      <div id="addBannerStatus" style="font-size:12px; color:var(--present); margin-top:8px;"></div>
+    </div>
+    <div class="glass-card">
+      <h2>Current banners</h2>
+      <button class="glass-btn ghost" id="clearAllBannersBtn" style="margin-bottom:12px;">Remove all banners</button>
+      <div id="bannerAdminList"></div>
+    </div>
+  </main>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, doc, getDocs, addDoc, deleteDoc, query, where, orderBy } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBDCH98RmJZIcpRo4CdFMubH6R_180GhOI",
+  authDomain: "sahil-4db34.firebaseapp.com",
+  projectId: "sahil-4db34",
+  storageBucket: "sahil-4db34.firebasestorage.app",
+  messagingSenderId: "113728963521",
+  appId: "1:113728963521:web:121f7acf027742379b6540",
+  measurementId: "G-RGHR72ZJF9"
+};
+
+// ⚠️ change this before sharing the file with anyone
+const ADMIN_PASSWORD = "science2026";
+const MAX_BANNER_WIDTH = 1200;
+
+const fbApp = initializeApp(firebaseConfig);
+const auth = getAuth(fbApp);
+const db = getFirestore(fbApp);
+
+let studentLinks = []; // [{id, name, link, order}]
+let banners = []; // [{id, imageBase64, link, order}]
+let carouselIndex = 0;
+let carouselTimer = null;
+
+function pad(n){ return String(n).padStart(2,'0'); }
+
+const screens = ['homeScreen','adminPassScreen','adminScreen'];
+function show(id){ screens.forEach(s=>document.getElementById(s).classList.toggle('hidden', s!==id)); }
+
+function ensureAuth(){
+  return new Promise((resolve)=>{
+    if(auth.currentUser){ resolve(auth.currentUser); return; }
+    signInAnonymously(auth).catch(err=>console.error("anon sign-in failed", err));
+    const unsub = onAuthStateChanged(auth, user=>{ if(user){ unsub(); resolve(user); } });
+  });
+}
+
+// ---------- rotating background (bg1.png..bg5.png, cross-fades every 7s) ----------
+const BG_CANDIDATES = ['bg1.png','bg2.png','bg3.png','bg4.png','bg5.png'];
+function preloadImage(src){
+  return new Promise(resolve=>{
+    const img = new Image();
+    img.onload = ()=> resolve(src);
+    img.onerror = ()=> resolve(null);
+    img.src = src;
+  });
+}
+async function startBackgroundSlideshow(){
+  const results = await Promise.all(BG_CANDIDATES.map(preloadImage));
+  const validImages = results.filter(Boolean);
+  if(!validImages.length) return; // no bg images found — dark gradient stays as-is
+  const layers = [document.getElementById('bgLayerA'), document.getElementById('bgLayerB')];
+  let activeLayer = 0, imgIndex = 0;
+  layers[0].style.backgroundImage = `url('${validImages[0]}')`;
+  layers[0].classList.add('active');
+  if(validImages.length === 1) return; // only one image found, nothing to cycle
+  setInterval(()=>{
+    imgIndex = (imgIndex+1) % validImages.length;
+    const nextLayer = layers[1-activeLayer];
+    nextLayer.style.backgroundImage = `url('${validImages[imgIndex]}')`;
+    nextLayer.classList.add('active');
+    layers[activeLayer].classList.remove('active');
+    activeLayer = 1-activeLayer;
+  }, 7000);
+}
+
+// ---------- secret admin entry ----------
+let secretTaps = [];
+document.getElementById('brandTap').addEventListener('click', ()=>{
+  const now = Date.now();
+  secretTaps.push(now);
+  secretTaps = secretTaps.filter(t => now - t < 2000);
+  if(secretTaps.length >= 5){
+    secretTaps = [];
+    show('adminPassScreen');
+    document.getElementById('adminPassInput').value = '';
+    document.getElementById('adminPassError').textContent = '';
+  }
+});
+document.getElementById('adminPassSubmit').addEventListener('click', ()=>{
+  const val = document.getElementById('adminPassInput').value;
+  if(val === ADMIN_PASSWORD){ openAdmin(); }
+  else{ document.getElementById('adminPassError').textContent = "Wrong password."; }
+});
+document.getElementById('adminPassInput').addEventListener('keydown', e=>{ if(e.key==='Enter') document.getElementById('adminPassSubmit').click(); });
+document.getElementById('exitAdminBtn').addEventListener('click', ()=> show('homeScreen'));
+
+// ---------- student links (name + link, admin managed) ----------
+async function loadStudentLinks(){
+  const snap = await getDocs(query(collection(db,'studentLinks'), orderBy('order')));
+  studentLinks = snap.docs.map(d=>({id:d.id, ...d.data()}));
+}
+function renderStudentList(list){
+  const wrap = document.getElementById('studentGlassList');
+  if(!list.length){ wrap.innerHTML = '<div class="empty-note">No students added yet.</div>'; return; }
+  wrap.innerHTML = list.map(s=>`
+    <div class="student-row">
+      <div class="name">${s.name}</div>
+      <button class="glass-btn" data-link="${s.link||''}">Open</button>
+    </div>`).join('');
+  wrap.querySelectorAll('button').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      if(b.dataset.link) window.open(b.dataset.link, '_blank', 'noopener');
+    });
+  });
+}
+document.getElementById('studentSearchHome').addEventListener('input', e=>{
+  const q = e.target.value.toLowerCase();
+  renderStudentList(studentLinks.filter(s=> s.name.toLowerCase().includes(q)));
+});
+
+// ---------- admin: manage student name + link ----------
+document.getElementById('addLinkBtn').addEventListener('click', async ()=>{
+  const status = document.getElementById('addLinkStatus');
+  const name = document.getElementById('newLinkName').value.trim();
+  const link = document.getElementById('newLinkUrl').value.trim();
+  if(!name || !link){ status.style.color='var(--absent)'; status.textContent='Enter both a name and a link.'; return; }
+  await addDoc(collection(db,'studentLinks'), { name, link, order: Date.now(), addedAt: Date.now() });
+  document.getElementById('newLinkName').value = '';
+  document.getElementById('newLinkUrl').value = '';
+  status.style.color='var(--present)'; status.textContent='Student added ✓';
+  setTimeout(()=> status.textContent='', 2000);
+  await loadStudentLinks(); renderStudentList(studentLinks); renderLinkAdminList();
+});
+function renderLinkAdminList(){
+  const wrap = document.getElementById('linkAdminList');
+  if(!studentLinks.length){ wrap.innerHTML = '<div class="empty-note">No students added yet.</div>'; return; }
+  wrap.innerHTML = studentLinks.map(s=>`
+    <div class="banner-admin-row">
+      <div style="flex:1;">
+        <div class="name" style="font-size:13.5px;">${s.name}</div>
+        <div class="link-text">${s.link}</div>
+      </div>
+      <button class="glass-btn ghost" data-id="${s.id}">Remove</button>
+    </div>`).join('');
+  wrap.querySelectorAll('button').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!confirm('Remove this student?')) return;
+      await deleteDoc(doc(db,'studentLinks', btn.dataset.id));
+      await loadStudentLinks(); renderStudentList(studentLinks); renderLinkAdminList();
+    });
+  });
+}
+document.getElementById('clearAllLinksBtn').addEventListener('click', async ()=>{
+  if(!studentLinks.length) return;
+  if(!confirm(`Remove all ${studentLinks.length} student(s)? This can't be undone.`)) return;
+  await Promise.all(studentLinks.map(s => deleteDoc(doc(db,'studentLinks', s.id))));
+  await loadStudentLinks(); renderStudentList(studentLinks); renderLinkAdminList();
+});
+
+// ---------- banner carousel (public) ----------
+async function loadBanners(){
+  const snap = await getDocs(query(collection(db,'banners'), orderBy('order')));
+  banners = snap.docs.map(d=>({id:d.id, ...d.data()}));
+}
+function renderCarousel(){
+  const track = document.getElementById('carouselTrack');
+  const empty = document.getElementById('carouselEmpty');
+  const dots = document.getElementById('carouselDots');
+  if(!banners.length){
+    track.classList.add('hidden'); empty.classList.remove('hidden'); dots.innerHTML = '';
+    return;
+  }
+  empty.classList.add('hidden'); track.classList.remove('hidden');
+  track.innerHTML = banners.map(b=>`
+    <div class="carousel-slide" tabindex="0" role="button" aria-label="Open banner link" data-link="${b.link||''}">
+      <img src="${b.imageBase64}" alt="Banner">
+      ${b.link?`<div class="glass-caption">Tap to open →</div>`:''}
+    </div>`).join('');
+  dots.innerHTML = banners.map((_,i)=>`<button class="dot ${i===carouselIndex?'active':''}" data-i="${i}"></button>`).join('');
+  track.querySelectorAll('.carousel-slide').forEach(slide=>{
+    const open = ()=>{ const link = slide.dataset.link; if(link) window.open(link, '_blank', 'noopener'); };
+    slide.addEventListener('click', open);
+    slide.addEventListener('keydown', e=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); open(); } });
+  });
+  dots.querySelectorAll('.dot').forEach(d=> d.addEventListener('click', ()=>{ carouselIndex = parseInt(d.dataset.i); updateCarouselPosition(); resetCarouselTimer(); }));
+  updateCarouselPosition();
+  resetCarouselTimer();
+}
+function updateCarouselPosition(){
+  const track = document.getElementById('carouselTrack');
+  if(carouselIndex >= banners.length) carouselIndex = 0;
+  track.style.transform = `translateX(-${carouselIndex*100}%)`;
+  document.querySelectorAll('.dot').forEach((d,i)=> d.classList.toggle('active', i===carouselIndex));
+}
+function resetCarouselTimer(){
+  if(carouselTimer) clearInterval(carouselTimer);
+  if(banners.length > 1){
+    carouselTimer = setInterval(()=>{ carouselIndex = (carouselIndex+1)%banners.length; updateCarouselPosition(); }, 4500);
+  }
+}
+
+// ---------- admin: banner management ----------
+let pendingImageBase64 = null;
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+dropzone.addEventListener('click', ()=> fileInput.click());
+dropzone.addEventListener('dragover', e=>{ e.preventDefault(); dropzone.classList.add('dragover'); });
+dropzone.addEventListener('dragleave', ()=> dropzone.classList.remove('dragover'));
+dropzone.addEventListener('drop', e=>{
+  e.preventDefault(); dropzone.classList.remove('dragover');
+  if(e.dataTransfer.files && e.dataTransfer.files[0]) handleImageFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', ()=>{ if(fileInput.files[0]) handleImageFile(fileInput.files[0]); });
+
+function handleImageFile(file){
+  if(!file.type.startsWith('image/')){ alert('Please choose an image file.'); return; }
+  const reader = new FileReader();
+  reader.onload = (e)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      const scale = Math.min(1, MAX_BANNER_WIDTH / img.width);
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      pendingImageBase64 = canvas.toDataURL('image/jpeg', 0.72);
+      const thumb = document.getElementById('previewThumb');
+      thumb.src = pendingImageBase64;
+      thumb.classList.remove('hidden');
+      dropzone.textContent = 'Image ready — drop another to replace';
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+document.getElementById('addBannerBtn').addEventListener('click', async ()=>{
+  const status = document.getElementById('addBannerStatus');
+  if(!pendingImageBase64){ status.style.color = 'var(--absent)'; status.textContent = 'Choose an image first.'; return; }
+  if(pendingImageBase64.length > 900000){ status.style.color = 'var(--absent)'; status.textContent = 'Image still too large after compression — try a smaller/simpler image.'; return; }
+  const link = document.getElementById('bannerLink').value.trim();
+  await addDoc(collection(db,'banners'), { imageBase64: pendingImageBase64, link, order: Date.now(), addedAt: Date.now() });
+  pendingImageBase64 = null;
+  document.getElementById('previewThumb').classList.add('hidden');
+  document.getElementById('bannerLink').value = '';
+  dropzone.textContent = 'Drag & drop an image here — or click to choose one';
+  status.style.color = 'var(--present)'; status.textContent = 'Banner added ✓';
+  setTimeout(()=> status.textContent='', 2000);
+  await loadBanners(); renderCarousel(); renderBannerAdminList();
+});
+
+function renderBannerAdminList(){
+  const wrap = document.getElementById('bannerAdminList');
+  if(!banners.length){ wrap.innerHTML = '<div class="empty-note">No banners added yet.</div>'; return; }
+  wrap.innerHTML = banners.map(b=>`
+    <div class="banner-admin-row">
+      <img src="${b.imageBase64}" alt="">
+      <div class="link-text">${b.link || '(no link set)'}</div>
+      <button class="glass-btn ghost" data-id="${b.id}">Remove</button>
+    </div>`).join('');
+  wrap.querySelectorAll('button').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!confirm('Remove this banner?')) return;
+      await deleteDoc(doc(db,'banners', btn.dataset.id));
+      await loadBanners(); renderCarousel(); renderBannerAdminList();
+    });
+  });
+}
+
+document.getElementById('clearAllBannersBtn').addEventListener('click', async ()=>{
+  if(!banners.length){ return; }
+  if(!confirm(`Remove all ${banners.length} banner(s)? This can't be undone.`)) return;
+  await Promise.all(banners.map(b => deleteDoc(doc(db,'banners', b.id))));
+  await loadBanners(); renderCarousel(); renderBannerAdminList();
+});
+
+async function openAdmin(){
+  show('adminScreen');
+  await loadStudentLinks();
+  renderLinkAdminList();
+  await loadBanners();
+  renderBannerAdminList();
+}
+
+// ---------- boot ----------
+(async function boot(){
+  startBackgroundSlideshow();
+  await ensureAuth();
+  await loadStudentLinks();
+  renderStudentList(studentLinks);
+  await loadBanners();
+  renderCarousel();
+  show('homeScreen');
+})();
+</script>
+</body>
+</html>
