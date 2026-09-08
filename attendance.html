@@ -6,6 +6,11 @@
 <title>Science World — Mark Attendance</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://firestore.googleapis.com">
+<link rel="preconnect" href="https://www.gstatic.com">
+<link rel="preconnect" href="https://identitytoolkit.googleapis.com">
+<link rel="dns-prefetch" href="https://firestore.googleapis.com">
+<link rel="dns-prefetch" href="https://www.gstatic.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
 <style>
   :root{
@@ -207,7 +212,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
-  getFirestore, collection, doc, setDoc, getDoc, getDocs, query, where, serverTimestamp
+  getFirestore, collection, doc, setDoc, getDoc, getDocs, query, where, serverTimestamp, enableIndexedDbPersistence
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
@@ -223,6 +228,34 @@ const firebaseConfig = {
 const fbApp = initializeApp(firebaseConfig);
 const db = getFirestore(fbApp);
 const auth = getAuth(fbApp);
+
+enableIndexedDbPersistence(db).catch((err)=>{
+  if(err.code === "failed-precondition"){
+    console.warn("Firestore offline persistence: only one tab can use this at a time.");
+  } else if(err.code === "unimplemented"){
+    console.warn("Firestore offline persistence: not supported in this browser.");
+  }
+});
+
+/* ---------------- LOCAL CACHE (stale-while-revalidate) ----------------
+   NOTE: we only ever cache config (branding) + the student's profile —
+   never today's attendance/mark status. That status has to be verified
+   live against Firestore every time (both on screen open and again at
+   the moment of tapping "Mark Attendance"), otherwise a stale cache
+   could show "not marked" when it actually is, or let someone try to
+   mark when the window's already closed. Caching branding+profile still
+   lets us skip straight to the mark screen instantly instead of making
+   the user wait through auth -> config -> student fetch, one after another,
+   before we even start the (unavoidable) live status check. */
+function cacheGet(key){
+  try{
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  }catch(e){ return null; }
+}
+function cacheSet(key, val){
+  try{ localStorage.setItem(key, JSON.stringify(val)); }catch(e){ /* storage full/unavailable, ignore */ }
+}
 
 let authReadyResolve;
 const authReady = new Promise(res => authReadyResolve = res);
@@ -246,14 +279,19 @@ function distanceMeters(lat1,lon1,lat2,lon2){
 let config = {};
 let currentStudent = null;
 
-async function loadConfig(){
-  const snap = await getDoc(doc(db,"config","settings"));
-  config = snap.exists() ? snap.data() : {};
+function applyBranding(){
   const name = config.instituteName || "Science World";
   const logo = config.logoUrl || "logo.png";
   document.title = name + " — Mark Attendance";
   ["entryTitle","markTitle"].forEach(id=> $("#"+id).textContent = name);
   ["entryLogo","markLogo"].forEach(id=> $("#"+id).src = logo);
+}
+
+async function loadConfig(){
+  const snap = await getDoc(doc(db,"config","settings"));
+  config = snap.exists() ? snap.data() : {};
+  applyBranding();
+  cacheSet("sw_config_cache_mark", config);
 }
 
 /* ---------------- NAME ENTRY / LOOKUP ---------------- */
@@ -301,6 +339,7 @@ function escapeHtml(str){
 function selectStudent(s){
   currentStudent = s;
   localStorage.setItem("sw_student_id", s.id);
+  cacheSet("sw_student_cache_mark_"+s.id, s);
   openMarkScreen();
 }
 
@@ -438,22 +477,53 @@ $("#btnMark").addEventListener("click", async ()=>{
 
 /* ---------------- INIT ---------------- */
 (async function init(){
+  const savedId = localStorage.getItem("sw_student_id");
+  let paintedFromCache = false;
+
+  /* ---- STEP 1: INSTANT PAINT FROM CACHE ----
+     Skip straight to the mark screen using last-known branding + profile,
+     instead of waiting on auth -> config -> student fetch (3 sequential
+     round trips) before the user sees anything. openMarkScreen() still
+     runs its own live Firestore check for today's status right away —
+     that part was never going to be instant (and shouldn't be), but now
+     it's the ONLY thing blocking, not the third in a queue. */
+  if(savedId){
+    const cachedConfig = cacheGet("sw_config_cache_mark");
+    const cachedStudent = cacheGet("sw_student_cache_mark_"+savedId);
+    if(cachedConfig && cachedStudent){
+      config = cachedConfig;
+      applyBranding();
+      currentStudent = cachedStudent;
+      openMarkScreen();
+      paintedFromCache = true;
+    }
+  }
+
+  /* ---- STEP 2: REAL DATA IN THE BACKGROUND ----
+     Always runs — refreshes branding/profile with the true latest values
+     and re-verifies today's mark status live, correcting anything that
+     may have changed since the cached snapshot. */
   await authReady;
   await loadConfig();
-  const savedId = localStorage.getItem("sw_student_id");
   if(savedId){
     try{
       const snap = await getDoc(doc(db,"students",savedId));
       if(snap.exists() && snap.data().active !== false){
         currentStudent = { id: savedId, ...snap.data() };
+        cacheSet("sw_student_cache_mark_"+savedId, currentStudent);
         openMarkScreen();
         return;
       } else {
         localStorage.removeItem("sw_student_id");
+        if(!paintedFromCache) showScreen("screen-entry");
       }
-    } catch(e){ console.error(e); }
+    } catch(e){
+      console.error(e);
+      if(!paintedFromCache) showScreen("screen-entry");
+    }
+    return;
   }
-  showScreen("screen-entry");
+  if(!paintedFromCache) showScreen("screen-entry");
 })();
 </script>
 </body>
