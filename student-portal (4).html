@@ -4,6 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Science World — Student Portal</title>
+<link rel="preconnect" href="https://firestore.googleapis.com">
+<link rel="preconnect" href="https://www.gstatic.com">
+<link rel="preconnect" href="https://identitytoolkit.googleapis.com">
+<link rel="dns-prefetch" href="https://firestore.googleapis.com">
+<link rel="dns-prefetch" href="https://www.gstatic.com">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -38,6 +43,7 @@
   }
   .hidden{display:none !important;}
   .bg-blobs{display:none;}
+  @keyframes spPulse{ 0%,100%{opacity:1;} 50%{opacity:.25;} }
 
   #app{position:relative; z-index:1; max-width:920px; margin:0 auto; padding:20px 18px 70px;}
   h2, .name, .brand, #summaryStudentName, .pct-big, .num{text-shadow:0 1px 6px rgba(0,0,0,0.4);}
@@ -161,7 +167,13 @@
 
     <div class="glass-card">
       <h2 class="tight">Students</h2>
-      <div class="section-sub">Attendance Summary — August 2026</div>
+      <div class="section-sub" style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+        <span>Attendance Summary — August 2026</span>
+        <span id="spSyncBadge" style="display:none;align-items:center;gap:6px;font-size:11px;color:var(--ink-soft);">
+          <span style="width:6px;height:6px;border-radius:50%;background:var(--accent);display:inline-block;animation:spPulse 1s ease-in-out infinite;"></span>
+          Syncing…
+        </span>
+      </div>
       <div class="search-glass"><input id="studentSearchHome" placeholder="Search a name..."></div>
       <div class="student-glass-list" id="studentGlassList"></div>
     </div>
@@ -227,7 +239,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, doc, getDocs, addDoc, deleteDoc, query, where, orderBy } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFirestore, collection, doc, getDocs, addDoc, deleteDoc, query, where, orderBy, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCUHArUgV-fAbC7oYllqvm7DAyGDYHaCOc",
@@ -246,6 +258,28 @@ const MAX_BANNER_WIDTH = 1200;
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
 const db = getFirestore(fbApp);
+
+enableIndexedDbPersistence(db).catch((err)=>{
+  if(err.code === "failed-precondition"){
+    console.warn("Firestore offline persistence: only one tab can use this at a time.");
+  } else if(err.code === "unimplemented"){
+    console.warn("Firestore offline persistence: not supported in this browser.");
+  }
+});
+
+/* ---------------- LOCAL CACHE (stale-while-revalidate) ----------------
+   Same idea as the attendance app: show the last-known students/banners
+   from localStorage INSTANTLY, then quietly refetch fresh data from
+   Firebase in the background and update the UI once it arrives. */
+function cacheGet(key){
+  try{
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  }catch(e){ return null; }
+}
+function cacheSet(key, val){
+  try{ localStorage.setItem(key, JSON.stringify(val)); }catch(e){ /* storage full/unavailable, ignore */ }
+}
 
 let studentLinks = []; // [{id, name, link, order}]
 let banners = []; // [{id, imageBase64, link, order}]
@@ -319,6 +353,7 @@ document.getElementById('exitAdminBtn').addEventListener('click', ()=> show('hom
 async function loadStudentLinks(){
   const snap = await getDocs(query(collection(db,'studentLinks'), orderBy('order')));
   studentLinks = snap.docs.map(d=>({id:d.id, ...d.data()}));
+  cacheSet("sp_student_links_cache", studentLinks);
 }
 function renderStudentList(list){
   const wrap = document.getElementById('studentGlassList');
@@ -382,6 +417,7 @@ document.getElementById('clearAllLinksBtn').addEventListener('click', async ()=>
 async function loadBanners(){
   const snap = await getDocs(query(collection(db,'banners'), orderBy('order')));
   banners = snap.docs.map(d=>({id:d.id, ...d.data()}));
+  cacheSet("sp_banners_cache", banners);
 }
 function renderCarousel(){
   const track = document.getElementById('carouselTrack');
@@ -507,12 +543,43 @@ async function openAdmin(){
 // ---------- boot ----------
 (async function boot(){
   startBackgroundSlideshow();
-  await ensureAuth();
-  await loadStudentLinks();
-  renderStudentList(studentLinks);
-  await loadBanners();
-  renderCarousel();
-  show('homeScreen');
+
+  /* ---- STEP 1: INSTANT PAINT FROM LOCAL CACHE ----
+     Show the last-known students + banners right away, no waiting on
+     Firebase. A tiny "Syncing…" badge tells the user fresh data is on
+     its way in the background. */
+  const cachedLinks = cacheGet("sp_student_links_cache");
+  const cachedBanners = cacheGet("sp_banners_cache");
+  let paintedFromCache = false;
+  if(cachedLinks || cachedBanners){
+    if(cachedLinks) studentLinks = cachedLinks;
+    if(cachedBanners) banners = cachedBanners;
+    renderStudentList(studentLinks);
+    renderCarousel();
+    show('homeScreen');
+    const badge = document.getElementById('spSyncBadge');
+    if(badge) badge.style.display = 'flex';
+    paintedFromCache = true;
+  }
+
+  /* ---- STEP 2: FETCH REAL DATA IN THE BACKGROUND ----
+     Always runs, whether or not we painted from cache. Updates the UI
+     silently once fresh data arrives — 1 sec ya 15 sec, jitni jaldi
+     Firebase respond kare. */
+  try{
+    await ensureAuth();
+    await loadStudentLinks();
+    renderStudentList(studentLinks);
+    await loadBanners();
+    renderCarousel();
+    show('homeScreen');
+  } catch(e){
+    console.error(e);
+    if(!paintedFromCache) show('homeScreen'); // still show something instead of a blank page
+  } finally {
+    const badge = document.getElementById('spSyncBadge');
+    if(badge) badge.style.display = 'none';
+  }
 })();
 </script>
 </body>
