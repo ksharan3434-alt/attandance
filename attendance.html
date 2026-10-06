@@ -517,7 +517,6 @@
 </section>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
@@ -617,7 +616,7 @@ function pinDivIcon(color, label){
 
 function initRealMap(){
   if(typeof L === "undefined" || config.geoLat == null || config.geoLng == null) return;
-  const radius = config.geoRadius || 120;
+  const radius = config.geoRadius || 100;
 
   if(mapInited){
     // Config refreshed after the instant cache paint — just reposition, don't re-create the map.
@@ -835,6 +834,34 @@ async function refreshMarkUI(){
   statusEl.innerHTML = `<div class="msg info">Tap the button once you're at the institute.</div>`;
 }
 
+/* ---------------- BETTER GPS READING ----------------
+   A single getCurrentPosition() often returns a rough, network-based fix
+   (100-500 m off), especially indoors. Instead we watch GPS for a few
+   seconds, keep the most accurate reading, and stop as soon as it's good. */
+const GPS_GOOD_ACCURACY = 25;   // stop early once accuracy is this good (m)
+const GPS_MAX_WAIT_MS   = 20000;
+const GPS_MAX_SLACK     = 40;   // max metres we forgive for GPS error
+function getBestPosition(onProgress){
+  return new Promise((resolve, reject)=>{
+    let best = null, done = false, watchId = null, lastErr = null;
+    const finish = (err)=>{
+      if(done) return; done = true;
+      if(watchId != null) navigator.geolocation.clearWatch(watchId);
+      clearTimeout(timer);
+      if(best) resolve(best); else reject(err || lastErr || { code:3 });
+    };
+    const timer = setTimeout(()=>finish(), GPS_MAX_WAIT_MS);
+    watchId = navigator.geolocation.watchPosition(p=>{
+      if(!best || p.coords.accuracy < best.coords.accuracy) best = p;
+      if(onProgress) onProgress(best);
+      if(best.coords.accuracy <= GPS_GOOD_ACCURACY) finish();
+    }, err=>{
+      lastErr = err;
+      if(err.code === 1) finish(err);   // permission denied
+    }, { enableHighAccuracy:true, maximumAge:0, timeout:GPS_MAX_WAIT_MS });
+  });
+}
+
 $("#btnMark").addEventListener("click", async ()=>{
   const btn = $("#btnMark");
   const statusEl = $("#markStatus");
@@ -868,15 +895,31 @@ $("#btnMark").addEventListener("click", async ()=>{
   btn.textContent = "Checking your location...";
   setPinChecking(true);
 
-  navigator.geolocation.getCurrentPosition(async pos=>{
+  const radius = config.geoRadius || 100;
+  btn.textContent = "Locking GPS...";
+  statusEl.innerHTML = `<div class="msg info">Getting an accurate GPS fix, please wait a few seconds…</div>`;
+
+  getBestPosition(p=>{
+    const a = Math.round(p.coords.accuracy);
+    updateAccuracyCard(a);
+    updateUserMarkerOnMap(p.coords.latitude, p.coords.longitude);
+    statusEl.innerHTML = `<div class="msg info">Locking GPS… accuracy ±${a} m</div>`;
+  }).then(async pos=>{
+    const acc = pos.coords.accuracy != null ? pos.coords.accuracy : 0;
+    const accRounded = Math.round(acc);
     const dist = distanceMeters(config.geoLat, config.geoLng, pos.coords.latitude, pos.coords.longitude);
-    const radius = config.geoRadius || 120;
-    const accRounded = pos.coords.accuracy != null ? Math.round(pos.coords.accuracy) : null;
     updateAccuracyCard(accRounded);
     updateUserMarkerOnMap(pos.coords.latitude, pos.coords.longitude);
-    if(dist > radius){
+
+    // GPS is never exact — forgive the reading's own error margin (capped).
+    const effectiveDist = dist - Math.min(acc, GPS_MAX_SLACK);
+    if(effectiveDist > radius){
       setPinChecking(false);
-      statusEl.innerHTML = `<div class="msg err">You're ~${Math.round(dist)}m from the institute (limit: ${radius}m).</div>`;
+      let hint = "";
+      if(accRounded > 50){
+        hint = `<br><span style="font-weight:500">GPS signal is weak (±${accRounded} m). Go near a window / open area, turn ON Location (High accuracy) and try again.</span>`;
+      }
+      statusEl.innerHTML = `<div class="msg err">You're ~${Math.round(dist)}m from the institute (limit: ${radius}m).${hint}</div>`;
       btn.disabled = false;
       btn.textContent = "Mark Attendance";
       return;
@@ -893,7 +936,7 @@ $("#btnMark").addEventListener("click", async ()=>{
       try{
         const snd = $("#successSound");
         snd.currentTime = 0;
-        snd.play().catch(()=>{ /* autoplay may be blocked until user gesture; this click counts as one */ });
+        snd.play().catch(()=>{});
       } catch(e){ console.warn("Sound couldn't play:", e); }
       showSuccessScreen(pos.coords.accuracy);
     } catch(e){
@@ -903,12 +946,15 @@ $("#btnMark").addEventListener("click", async ()=>{
       btn.disabled = false;
       btn.textContent = "Mark Attendance";
     }
-  }, err=>{
+  }).catch(err=>{
     setPinChecking(false);
-    statusEl.innerHTML = `<div class="msg err">Location permission is required — please allow it and try again.</div>`;
+    const denied = err && err.code === 1;
+    statusEl.innerHTML = denied
+      ? `<div class="msg err">Location permission is required — please allow it and try again.</div>`
+      : `<div class="msg err">Couldn't get a GPS fix. Turn ON Location (High accuracy), go near a window/open area and try again.</div>`;
     btn.disabled = false;
     btn.textContent = "Mark Attendance";
-  }, { enableHighAccuracy:true, timeout:15000, maximumAge:0 });
+  });
 });
 
 /* ---------------- INIT ---------------- */
