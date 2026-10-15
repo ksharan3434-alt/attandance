@@ -815,6 +815,7 @@ async function refreshMarkUI(){
   const dateStr = todayStr();
 
   try{
+    await Promise.race([authReady, new Promise(r=>setTimeout(r,4000))]);   // auth ready hone se pehle query na jaye
     const existing = await getDoc(doc(db,"attendance",dateStr+"_"+currentStudent.id));
     if(existing.exists() && existing.data().status === "present"){
       btn.disabled = true;
@@ -832,56 +833,90 @@ async function refreshMarkUI(){
     return;
   }
   statusEl.innerHTML = `<div class="msg info">Tap the button once you're at the institute.</div>`;
+  startGps();   // warm-up: tap tak GPS fix ready
 }
 
-/* ---------------- BETTER GPS READING ----------------
-   A single getCurrentPosition() often returns a rough, network-based fix
-   (100-500 m off), especially indoors. Instead we watch GPS for a few
-   seconds, keep the most accurate reading, and stop as soon as it's good. */
-const GPS_GOOD_ACCURACY = 25;   // stop early once accuracy is this good (m)
-const GPS_MAX_WAIT_MS   = 20000;
-const GPS_MAX_SLACK     = 40;   // max metres we forgive for GPS error
-function getBestPosition(onProgress){
-  return new Promise((resolve, reject)=>{
-    let best = null, done = false, watchId = null, lastErr = null;
-    const finish = (err)=>{
-      if(done) return; done = true;
-      if(watchId != null) navigator.geolocation.clearWatch(watchId);
-      clearTimeout(timer);
-      if(best) resolve(best); else reject(err || lastErr || { code:3 });
+/* ---------------- FAST GPS ENGINE ----------------
+   Pehle: tap karne ke BAAD GPS start hota tha aur 25m accuracy ka wait karta tha
+   (coaching ke andar ye kabhi nahi milti -> poore 20 sec wait ya fail).
+   Ab:
+   1) Mark screen khulte hi GPS warm-up shuru (tap tak fix ready hota hai)
+   2) Satellite GPS + network location dono saath chalte hain (indoors fast)
+   3) Jaise hi KOI reading radius ke andar pass ho jaye -> turant mark
+   4) Closure check GPS ke saath parallel chalta hai (pehle alag wait tha)        */
+const GPS_MAX_SLACK    = 40;     // GPS error ke liye max metres ki chhoot
+const GPS_MAX_WAIT_MS  = 15000;
+const GPS_PASS_MAX_ACC = 150;    // isse zyada kharab accuracy accept nahi
+const GPS_FRESH_MS     = 20000;
+let gpsWatchIds = [], gpsPass = null, gpsBest = null, gpsLastErr = null, gpsStopTimer = null;
+const gpsListeners = new Set();
+
+function evalFix(p){
+  const acc = p.coords.accuracy != null ? p.coords.accuracy : 0;
+  const dist = distanceMeters(config.geoLat, config.geoLng, p.coords.latitude, p.coords.longitude);
+  const radius = config.geoRadius || 100;
+  const effective = dist - Math.min(acc, GPS_MAX_SLACK);
+  return { pos:p, acc, dist, pass: (effective <= radius && acc <= GPS_PASS_MAX_ACC), at: Date.now() };
+}
+function onGpsFix(p){
+  if(config.geoLat == null || config.geoLng == null) return;
+  const r = evalFix(p);
+  if(!gpsBest || r.acc <= gpsBest.acc || Date.now()-gpsBest.at > GPS_FRESH_MS) gpsBest = r;
+  if(r.pass) gpsPass = r;
+  const scr = document.getElementById("screen-mark");
+  if(scr && scr.classList.contains("active")){
+    updateAccuracyCard(Math.round(r.acc));
+    updateUserMarkerOnMap(p.coords.latitude, p.coords.longitude);
+  }
+  gpsListeners.forEach(fn=>fn(r,null));
+}
+function onGpsErr(err){
+  gpsLastErr = err;
+  gpsListeners.forEach(fn=>fn(null,err));
+}
+function startGps(){
+  if(!navigator.geolocation || gpsWatchIds.length) return;
+  gpsWatchIds = [
+    navigator.geolocation.watchPosition(onGpsFix, onGpsErr, { enableHighAccuracy:true,  maximumAge:0,     timeout:30000 }),
+    navigator.geolocation.watchPosition(onGpsFix, onGpsErr, { enableHighAccuracy:false, maximumAge:15000, timeout:30000 })
+  ];
+  clearTimeout(gpsStopTimer);
+  gpsStopTimer = setTimeout(stopGps, 180000);   // battery bachane ke liye 3 min baad band
+}
+function stopGps(){
+  gpsWatchIds.forEach(id=>navigator.geolocation.clearWatch(id));
+  gpsWatchIds = []; clearTimeout(gpsStopTimer);
+}
+function waitForPassingFix(onProgress){
+  return new Promise(resolve=>{
+    if(gpsPass && Date.now()-gpsPass.at < GPS_FRESH_MS){ resolve({ ok:true, fix:gpsPass }); return; }
+    let done = false, timer = null;
+    const finish = res=>{ if(done) return; done = true; clearTimeout(timer); gpsListeners.delete(fn); resolve(res); };
+    const fn = (r, err)=>{
+      if(err){ if(err.code === 1) finish({ ok:false, err }); return; }
+      if(onProgress) onProgress(r);
+      if(r.pass) finish({ ok:true, fix:r });
     };
-    const timer = setTimeout(()=>finish(), GPS_MAX_WAIT_MS);
-    watchId = navigator.geolocation.watchPosition(p=>{
-      if(!best || p.coords.accuracy < best.coords.accuracy) best = p;
-      if(onProgress) onProgress(best);
-      if(best.coords.accuracy <= GPS_GOOD_ACCURACY) finish();
-    }, err=>{
-      lastErr = err;
-      if(err.code === 1) finish(err);   // permission denied
-    }, { enableHighAccuracy:true, maximumAge:0, timeout:GPS_MAX_WAIT_MS });
+    timer = setTimeout(()=>{
+      const fresh = (gpsBest && Date.now()-gpsBest.at < GPS_FRESH_MS*2) ? gpsBest : null;
+      finish({ ok:false, best:fresh, err:gpsLastErr });
+    }, GPS_MAX_WAIT_MS);
+    gpsListeners.add(fn);
   });
 }
+const WRITE_SLOW_MS = 7000;
 
 $("#btnMark").addEventListener("click", async ()=>{
   const btn = $("#btnMark");
   const statusEl = $("#markStatus");
   statusEl.innerHTML = "";
   const dateStr = todayStr();
+  const resetBtn = ()=>{ setPinChecking(false); btn.disabled = false; btn.textContent = "Mark Attendance"; };
 
-  const windowOpen = isWindowOpen();
-  if(!windowOpen){
+  if(!isWindowOpen()){
     statusEl.innerHTML = `<div class="msg err">Check-in is only open from ${config.checkinStart||"07:00"} to ${config.checkinEnd||"10:00"}.</div>`;
     return;
   }
-
-  try{
-    const closedSnap = await getDoc(doc(db,"closures",dateStr));
-    if(closedSnap.exists() && closedSnap.data().closed === true){
-      statusEl.innerHTML = `<div class="msg err">🔒 The institute is closed today. Attendance can't be marked.</div>`;
-      return;
-    }
-  } catch(e){ console.error(e); }
-
   if(config.geoLat == null || config.geoLng == null){
     statusEl.innerHTML = `<div class="msg err">The institute location hasn't been set up yet. Contact your admin.</div>`;
     return;
@@ -892,69 +927,69 @@ $("#btnMark").addEventListener("click", async ()=>{
   }
 
   btn.disabled = true;
-  btn.textContent = "Checking your location...";
+  btn.textContent = "Locking GPS...";
   setPinChecking(true);
+  statusEl.innerHTML = `<div class="msg info">Getting your location, please wait a few seconds…</div>`;
+
+  if(gpsLastErr && gpsLastErr.code === 1){ stopGps(); gpsLastErr = null; }   // permission dobara maange
+  startGps();
+
+  // closure check GPS ke saath parallel
+  const closedP = getDoc(doc(db,"closures",dateStr))
+    .then(s=> s.exists() && s.data().closed === true)
+    .catch(()=> false);
 
   const radius = config.geoRadius || 100;
-  btn.textContent = "Locking GPS...";
-  statusEl.innerHTML = `<div class="msg info">Getting an accurate GPS fix, please wait a few seconds…</div>`;
-
-  getBestPosition(p=>{
-    const a = Math.round(p.coords.accuracy);
-    updateAccuracyCard(a);
-    updateUserMarkerOnMap(p.coords.latitude, p.coords.longitude);
-    statusEl.innerHTML = `<div class="msg info">Locking GPS… accuracy ±${a} m</div>`;
-  }).then(async pos=>{
-    const acc = pos.coords.accuracy != null ? pos.coords.accuracy : 0;
-    const accRounded = Math.round(acc);
-    const dist = distanceMeters(config.geoLat, config.geoLng, pos.coords.latitude, pos.coords.longitude);
-    updateAccuracyCard(accRounded);
-    updateUserMarkerOnMap(pos.coords.latitude, pos.coords.longitude);
-
-    // GPS is never exact — forgive the reading's own error margin (capped).
-    const effectiveDist = dist - Math.min(acc, GPS_MAX_SLACK);
-    if(effectiveDist > radius){
-      setPinChecking(false);
-      let hint = "";
-      if(accRounded > 50){
-        hint = `<br><span style="font-weight:500">GPS signal is weak (±${accRounded} m). Go near a window / open area, turn ON Location (High accuracy) and try again.</span>`;
-      }
-      statusEl.innerHTML = `<div class="msg err">You're ~${Math.round(dist)}m from the institute (limit: ${radius}m).${hint}</div>`;
-      btn.disabled = false;
-      btn.textContent = "Mark Attendance";
-      return;
-    }
-    try{
-      const docId = dateStr+"_"+currentStudent.id;
-      await setDoc(doc(db,"attendance",docId), {
-        studentId: currentStudent.id, date: dateStr, status:"present",
-        markedAt: serverTimestamp(), method:"gps", distance: Math.round(dist),
-        accuracy: accRounded
-      });
-      setPinChecking(false);
-      btn.textContent = "✓ Present for Today";
-      try{
-        const snd = $("#successSound");
-        snd.currentTime = 0;
-        snd.play().catch(()=>{});
-      } catch(e){ console.warn("Sound couldn't play:", e); }
-      showSuccessScreen(pos.coords.accuracy);
-    } catch(e){
-      console.error(e);
-      setPinChecking(false);
-      statusEl.innerHTML = `<div class="msg err">Something went wrong. Please try again.</div>`;
-      btn.disabled = false;
-      btn.textContent = "Mark Attendance";
-    }
-  }).catch(err=>{
-    setPinChecking(false);
-    const denied = err && err.code === 1;
-    statusEl.innerHTML = denied
-      ? `<div class="msg err">Location permission is required — please allow it and try again.</div>`
-      : `<div class="msg err">Couldn't get a GPS fix. Turn ON Location (High accuracy), go near a window/open area and try again.</div>`;
-    btn.disabled = false;
-    btn.textContent = "Mark Attendance";
+  const res = await waitForPassingFix(r=>{
+    statusEl.innerHTML = `<div class="msg info">Locking GPS… accuracy ±${Math.round(r.acc)} m</div>`;
   });
+
+  if(await closedP){
+    statusEl.innerHTML = `<div class="msg err">🔒 The institute is closed today. Attendance can't be marked.</div>`;
+    resetBtn(); return;
+  }
+
+  if(!res.ok){
+    resetBtn();
+    if(res.err && res.err.code === 1){
+      statusEl.innerHTML = `<div class="msg err">Location permission is required — please allow it and try again.</div>`;
+    } else if(res.best){
+      const b = res.best, accR = Math.round(b.acc);
+      statusEl.innerHTML = (b.acc > GPS_PASS_MAX_ACC)
+        ? `<div class="msg err">GPS signal bahut weak hai (±${accR} m). Window / khuli jagah ke paas jaao, Location (High accuracy) ON karo aur dobara try karo.</div>`
+        : `<div class="msg err">You're ~${Math.round(b.dist)}m from the institute (limit: ${radius}m).${accR>50?`<br><span style="font-weight:500">GPS signal weak (±${accR} m) — window ke paas jaakar dobara try karo.</span>`:""}</div>`;
+    } else {
+      statusEl.innerHTML = `<div class="msg err">Couldn't get a GPS fix. Turn ON Location (High accuracy), go near a window/open area and try again.</div>`;
+    }
+    return;
+  }
+
+  const { pos, acc, dist } = res.fix;
+  const accRounded = Math.round(acc);
+  updateAccuracyCard(accRounded);
+  btn.textContent = "Saving...";
+
+  const docId = dateStr+"_"+currentStudent.id;
+  const writeP = setDoc(doc(db,"attendance",docId), {
+    studentId: currentStudent.id, date: dateStr, status:"present",
+    markedAt: serverTimestamp(), method:"gps", distance: Math.round(dist),
+    accuracy: accRounded
+  });
+  try{
+    // Slow internet par server ack ka wait nahi: 7 sec baad bhi write local queue me safe hai
+    // (offline persistence ON hai) aur net aate hi apne aap sync ho jaata hai.
+    const r = await Promise.race([ writeP.then(()=>"ok"), new Promise(r=>setTimeout(()=>r("slow"), WRITE_SLOW_MS)) ]);
+    writeP.catch(e=>console.error("late write error", e));
+    gpsPass = null; stopGps(); setPinChecking(false);
+    btn.textContent = "✓ Present for Today";
+    try{ const snd = $("#successSound"); snd.currentTime = 0; snd.play().catch(()=>{}); }catch(e){}
+    showSuccessScreen(pos.coords.accuracy);
+    if(r === "slow") $("#successSub").textContent = `You're all set, ${currentStudent.name}! (Network slow hai — net stable hote hi sync ho jayega)`;
+  } catch(e){
+    console.error(e);
+    statusEl.innerHTML = `<div class="msg err">Save nahi ho paya. Internet check karke dobara try karo.</div>`;
+    resetBtn();
+  }
 });
 
 /* ---------------- INIT ---------------- */
@@ -993,7 +1028,12 @@ $("#btnMark").addEventListener("click", async ()=>{
       if(snap.exists() && snap.data().active !== false){
         currentStudent = { id: savedId, ...snap.data() };
         cacheSet("sw_student_cache_mark_"+savedId, currentStudent);
-        openMarkScreen();
+        if(paintedFromCache){
+          $("#markStuMeta").textContent = `${currentStudent.name} · ${currentStudent.class||""} ${currentStudent.batch||""}`.trim();
+          initRealMap();
+        } else {
+          openMarkScreen();
+        }
         return;
       } else {
         localStorage.removeItem("sw_student_id");
